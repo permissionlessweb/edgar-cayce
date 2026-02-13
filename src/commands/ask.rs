@@ -1,0 +1,118 @@
+use crate::state::Context;
+use tracing::info;
+
+/// Ask a question about ingested documents
+#[poise::command(slash_command, guild_only)]
+pub async fn ask(
+    ctx: Context<'_>,
+    #[description = "Topic (matches ingested label)"]
+    #[autocomplete = "autocomplete_topic"]
+    topic: String,
+    #[description = "Your question"] question: String,
+    #[description = "Show debug evidence (admin only)"] debug: Option<bool>,
+) -> Result<(), anyhow::Error> {
+    ctx.defer().await?;
+
+    let user_id = ctx.author().id.get();
+    let is_admin = ctx.data().is_admin(user_id);
+    let show_debug = debug.unwrap_or(false) && is_admin;
+
+    // Read current config
+    let config = ctx.data().rlm_config.read().await;
+    let max_iterations = config.max_iterations;
+    let min_code_executions = config.min_code_executions;
+    let min_answer_len = config.min_answer_len;
+    drop(config);
+
+    info!(
+        user = ctx.author().name,
+        topic,
+        question,
+        is_admin,
+        "RLM query started"
+    );
+
+    let result = ctx
+        .data()
+        .rlm
+        .query(
+            &topic,
+            &question,
+            max_iterations,
+            min_code_executions,
+            min_answer_len,
+        )
+        .await?;
+
+    info!(
+        iterations = result.iterations,
+        answer_len = result.answer.len(),
+        evidence_count = result.evidence.len(),
+        "RLM query complete"
+    );
+
+    let mut full = format!(
+        "**Q:** {}\n**Topic:** {} | **Iterations:** {} | **Sources:** {}\n\n**A:** {}",
+        question,
+        topic,
+        result.iterations,
+        result.sources.join(", "),
+        result.answer
+    );
+
+    // Admin-only debug evidence
+    if show_debug && !result.evidence.is_empty() {
+        full.push_str("\n\n---\n**[Debug] Evidence collected from documents:**\n");
+        for (i, ev) in result.evidence.iter().enumerate().take(3) {
+            let snippet = if ev.len() > 800 { &ev[..800] } else { ev.as_str() };
+            full.push_str(&format!("\n**[{}]** ```\n{}```\n", i + 1, snippet));
+        }
+    }
+
+    // Send in chunks if needed
+    send_chunked(&ctx, &full).await
+}
+
+/// Send a message in Discord-safe chunks (max 1990 chars).
+async fn send_chunked(ctx: &Context<'_>, text: &str) -> Result<(), anyhow::Error> {
+    let mut remaining = text;
+    let mut first = true;
+    while !remaining.is_empty() {
+        let chunk_len = remaining.len().min(1990);
+        let split_at = if chunk_len < remaining.len() {
+            remaining[..chunk_len]
+                .rfind('\n')
+                .or_else(|| remaining[..chunk_len].rfind(' '))
+                .map(|i| i + 1)
+                .unwrap_or(chunk_len)
+        } else {
+            chunk_len
+        };
+        let chunk = &remaining[..split_at];
+        remaining = &remaining[split_at..];
+
+        if first {
+            ctx.say(chunk).await?;
+            first = false;
+        } else {
+            ctx.channel_id().say(ctx.http(), chunk).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Autocomplete for topic names from ingested document labels.
+async fn autocomplete_topic(ctx: Context<'_>, partial: &str) -> Vec<String> {
+    let labels = ctx
+        .data()
+        .store
+        .labels()
+        .await
+        .unwrap_or_default();
+
+    labels
+        .into_iter()
+        .filter(|l| l.to_lowercase().contains(&partial.to_lowercase()))
+        .take(25)
+        .collect()
+}

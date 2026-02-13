@@ -1,0 +1,23 @@
+[package]
+name = "discord-demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+poise = "0.6"
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "cache"] }
+tokio = { version = "1.40", features = ["full"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+dotenv = "0.15.0"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pyo3 = { version = "0.23", features = ["auto-initialize"] }
+blake3 = "1"
+chrono = { version = "0.4", features = ["serde"] }
+cnidarium = "0.84.0"
+githem-core = "0.4"
+html2text = "0.14"
+futures = "0.3"
