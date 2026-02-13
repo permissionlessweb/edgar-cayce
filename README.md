@@ -4,7 +4,7 @@ RLM-powered knowledge assistant for Discord. Ingest documents (GitHub repos, URL
 
 ## Inspiration
 
-The following resources are
+The following resources are what inspired this design. 
 
 - rlm paper: <https://arxiv.org/pdf/2512.24601>
 - rlm blog:  <https://www.primeintellect.ai/blog/rlm>
