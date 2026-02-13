@@ -2,6 +2,20 @@
 
 RLM-powered knowledge assistant for Discord. Ingest documents (GitHub repos, URLs), then ask questions answered through Python reasoning loops with document access.
 
+## Inspiration
+
+The following resources are
+
+- rlm paper: <https://arxiv.org/pdf/2512.24601>
+- rlm blog:  <https://www.primeintellect.ai/blog/rlm>
+- rlm-rs: <https://github.com/zircote/rlm-rs>
+- rig-rs: <https://github.com/joshua-mo-143/rig-rlm>
+- <https://github.com/brainqub3/claude_code_RLM>
+- @shanev for yapping about rlm on X
+- The Akash Clubhouse lead for the patience and coordination
+
+> Shout out to the people who coordinated these resources!
+
 ## Prerequisites
 
 - Rust (nightly)
@@ -12,7 +26,7 @@ RLM-powered knowledge assistant for Discord. Ingest documents (GitHub repos, URL
 
 ## Discord Bot Setup
 
-1. Go to https://discord.com/developers/applications
+1. Go to <https://discord.com/developers/applications>
 2. Create a new application
 3. Go to **Bot** tab, click **Reset Token**, copy the token
 4. Under **Privileged Gateway Intents**, enable **Message Content Intent**
@@ -121,12 +135,14 @@ Create a new Discord thread for conversation.
 Edgar works with any OpenAI-compatible `/v1/chat/completions` endpoint.
 
 **LM Studio** (local):
+
 ```bash
 # Start LM Studio, load a model, enable server on port 1234
 LLM_BASE_URL=http://localhost:1234/v1
 ```
 
 **Ollama**:
+
 ```bash
 ollama serve
 LLM_BASE_URL=http://localhost:11434
@@ -134,6 +150,7 @@ LLM_MODEL=qwen2.5:7b
 ```
 
 **OpenAI**:
+
 ```bash
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o
@@ -141,6 +158,7 @@ LLM_API_KEY=sk-...
 ```
 
 **vLLM**:
+
 ```bash
 LLM_BASE_URL=http://localhost:8000/v1
 LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
@@ -215,17 +233,21 @@ src/
 ## Troubleshooting
 
 **Bot connects but slash commands don't appear**
+
 - Set `DISCORD_GUILD_ID` for instant registration. Without it, global registration takes up to 1 hour.
 - Check bot has `applications.commands` scope.
 
 **`/edgar ask` times out**
+
 - Verify LLM endpoint is running: `curl $LLM_BASE_URL/models`
 - Try a smaller model if responses are slow.
 
 **PyO3 build errors**
+
 - Ensure `python3` is on PATH and matches the version PyO3 expects.
 - On macOS: `brew install python3`
 - Check: `python3-config --prefix`
 
 **`cnidarium` storage errors on startup**
+
 - Wipe stale data: `just clean-data`
