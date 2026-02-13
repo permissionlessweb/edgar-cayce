@@ -25,8 +25,13 @@ impl LlmClient {
             dotenv::var("LLM_SUB_MODEL").unwrap_or_else(|_| model.clone());
         let api_key = dotenv::var("LLM_API_KEY").ok().filter(|k| !k.is_empty());
 
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .context("Failed to create HTTP client")?;
+
         Ok(Self {
-            client: reqwest::Client::new(),
+            client,
             base_url,
             model,
             sub_model,
@@ -56,7 +61,8 @@ impl LlmClient {
         let body = serde_json::json!({
             "model": model,
             "messages": messages,
-            "temperature": 0.7,
+            "temperature": 0.3,
+            "max_tokens": 2048,
         });
 
         let mut req = self.client.post(self.endpoint()).json(&body);

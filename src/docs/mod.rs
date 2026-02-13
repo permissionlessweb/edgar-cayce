@@ -27,6 +27,8 @@ fn label_key(label: &str, id: &str) -> String {
 
 pub struct DocumentStore {
     storage: Storage,
+    /// Cache document content in memory after first read to avoid repeated cnidarium lookups.
+    content_cache: tokio::sync::RwLock<std::collections::HashMap<String, Vec<u8>>>,
 }
 
 impl DocumentStore {
@@ -40,7 +42,10 @@ impl DocumentStore {
         let storage = Storage::load(data_dir.to_path_buf(), prefixes)
             .await
             .context("Failed to init cnidarium storage")?;
-        Ok(Self { storage })
+        Ok(Self {
+            storage,
+            content_cache: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+        })
     }
 
     /// Store a document. Returns its content-addressed DocId.
@@ -80,12 +85,28 @@ impl DocumentStore {
     }
 
     pub async fn get_content(&self, doc_id: &str) -> Result<Vec<u8>> {
+        // Check cache first
+        {
+            let cache = self.content_cache.read().await;
+            if let Some(content) = cache.get(doc_id) {
+                return Ok(content.clone());
+            }
+        }
+
         let snapshot = self.storage.latest_snapshot();
         use cnidarium::StateRead;
-        snapshot
+        let content = snapshot
             .get_raw(&content_key(doc_id))
             .await?
-            .ok_or_else(|| anyhow::anyhow!("document not found: {}", doc_id))
+            .ok_or_else(|| anyhow::anyhow!("document not found: {}", doc_id))?;
+
+        // Cache for subsequent reads
+        {
+            let mut cache = self.content_cache.write().await;
+            cache.insert(doc_id.to_string(), content.clone());
+        }
+
+        Ok(content)
     }
 
     pub async fn get_meta(&self, doc_id: &str) -> Result<DocMeta> {

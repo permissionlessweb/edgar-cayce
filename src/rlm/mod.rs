@@ -92,66 +92,55 @@ impl RlmEngine {
         keywords
     }
 
-    /// Build bootstrap code: grep with context, find relevant files, read actual content.
+    /// Build a lightweight bootstrap: one search + one file read.
+    /// Heavy exploration is left to the LLM's own iterations.
     fn build_bootstrap_code(docs: &[DocMeta], question: &str) -> String {
         let doc_id = &docs[0].id;
         let keywords = Self::extract_keywords(question);
 
-        let mut code = format!(
+        // Use search_document (single scan, OR keyword matching, ranked by overlap)
+        // instead of N separate grep calls
+        let search_query = keywords.join(" ");
+
+        format!(
             r#"doc_id = "{doc_id}"
 
-# Find relevant files by name
-files = list_files(doc_id)
-relevant_files = []
-keywords = {keywords:?}
-for f in files:
-    name_lower = f["name"].lower()
-    score = sum(1 for kw in keywords if kw in name_lower)
-    if score > 0:
-        relevant_files.append((score, f))
-relevant_files.sort(key=lambda x: -x[0])
-
-print(f"=== {{len(files)}} total files, {{len(relevant_files)}} match keywords ===")
-if relevant_files:
-    print("Relevant files:")
-    for score, f in relevant_files[:15]:
-        print(f"  [score={{score}}, offset={{f['offset']}}] {{f['name']}}")
+# Search for relevant content (single pass, ranked by keyword overlap)
+results = search_document(doc_id, "{search_query}", 5)
+print(f"=== {{len(results)}} search results for: {search_query} ===")
+for r in results:
+    print(f"\n[offset={{r['offset']}}, matches={{r['match_count']}}]")
+    print(r["content"])
 print()
+
+# Show relevant files by name
+files = list_files(doc_id)
+keywords = {keywords}
+relevant = [(sum(1 for k in keywords if k in f["name"].lower()), f) for f in files]
+relevant = [(s,f) for s,f in relevant if s > 0]
+relevant.sort(key=lambda x: -x[0])
+print(f"=== {{len(files)}} total files, {{len(relevant)}} match keywords by name ===")
+for score, f in relevant[:10]:
+    print(f"  [offset={{f['offset']}}] {{f['name']}}")
+
+# Auto-read the best matching file
+if relevant:
+    best = relevant[0][1]["name"]
+    print(f"\n=== Reading: {{best}} ===")
+    content = read_file(doc_id, best)
+    print(content[:3000])
+    if len(content) > 3000:
+        print(f"... [{{len(content)}} total chars]")
+elif results:
+    # No filename match — read around the best search result
+    best_offset = max(results[0]["offset"] - 500, 0)
+    print(f"\n=== Content around best match (offset {{best_offset}}) ===")
+    print(get_section(doc_id, best_offset, 3000))
 "#,
             doc_id = doc_id,
+            search_query = search_query,
             keywords = format!("{:?}", keywords),
-        );
-
-        // Grep for each keyword with context lines
-        for kw in &keywords {
-            code.push_str(&format!(
-                r#"
-print("=== grep: {kw} (with context) ===")
-hits = grep(doc_id, "{kw}", 5, 5)
-for h in hits:
-    print(h["context"])
-    print("---")
-if not hits:
-    print("  (no matches)")
-print()
-"#,
-                kw = kw,
-            ));
-        }
-
-        // Auto-read the most relevant file if found
-        code.push_str(r#"
-# Auto-read the most relevant file
-if relevant_files:
-    best_file = relevant_files[0][1]["name"]
-    print(f"=== Reading: {best_file} ===")
-    content = read_file(doc_id, best_file)
-    print(content[:5000])
-    if len(content) > 5000:
-        print(f"\n... [{len(content)} total chars, use read_file(doc_id, '{best_file}') for more]")
-"#);
-
-        code
+        )
     }
 
     pub async fn query(
@@ -207,10 +196,10 @@ if relevant_files:
             debug!("  │ {}", line);
         }
 
-        let bootstrap_output_msg = if bootstrap_output.len() > 6000 {
+        let bootstrap_output_msg = if bootstrap_output.len() > 4000 {
             format!(
-                "{}...\n[truncated, {} total chars — use get_section() to read more]",
-                &bootstrap_output[..6000],
+                "{}...\n[truncated, {} total chars — use grep() or read_file() for more]",
+                &bootstrap_output[..4000],
                 bootstrap_output.len()
             )
         } else {
@@ -342,10 +331,10 @@ if relevant_files:
 
                     let output_msg = if output.is_empty() {
                         "[No output — use print() to see results]".to_string()
-                    } else if output.len() > 8000 {
+                    } else if output.len() > 4000 {
                         format!(
-                            "{}...\n[truncated, {} total chars]",
-                            &output[..8000],
+                            "{}...\n[truncated, {} total chars — narrow your search or read smaller sections]",
+                            &output[..4000],
                             output.len()
                         )
                     } else {
