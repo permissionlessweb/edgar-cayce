@@ -4,7 +4,7 @@ RLM-powered knowledge assistant for Discord. Ingest documents (GitHub repos, URL
 
 ## Inspiration
 
-The following resources are what inspired this design. 
+The following resources are what inspired this design.
 
 - rlm paper: <https://arxiv.org/pdf/2512.24601>
 - rlm blog:  <https://www.primeintellect.ai/blog/rlm>
@@ -251,3 +251,9 @@ src/
 **`cnidarium` storage errors on startup**
 
 - Wipe stale data: `just clean-data`
+
+### GOALS
+
+### PRIVACY
+
+Privacy in the context of discord bots is hard. We would have to route Q/A to a web-app client side, and then have some sort of ZK-TLS proof of membership for access to bot. Questions and answers would be public, but users who asked would be private

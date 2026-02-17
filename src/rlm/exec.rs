@@ -10,6 +10,58 @@ use crate::docs::types::DocMeta;
 use crate::docs::DocumentStore;
 use crate::llm::LlmClient;
 
+pub const BLOCKED: &[&str] = &[
+    "__import__",
+    "eval",
+    "exec",
+    "compile",
+    "open",
+    "input",
+    "globals",
+    "locals",
+    "breakpoint",
+    "exit",
+    "quit",
+];
+
+pub const ALLOWED: &[&str] = &[
+    "print",
+    "len",
+    "str",
+    "int",
+    "float",
+    "bool",
+    "list",
+    "dict",
+    "set",
+    "tuple",
+    "range",
+    "enumerate",
+    "zip",
+    "map",
+    "filter",
+    "sorted",
+    "min",
+    "max",
+    "sum",
+    "abs",
+    "round",
+    "type",
+    "isinstance",
+    "hasattr",
+    "getattr",
+    "repr",
+    "format",
+    "True",
+    "False",
+    "None",
+    "any",
+    "all",
+    "reversed",
+    "chr",
+    "ord",
+];
+
 /// Request to execute code on the persistent Python thread.
 struct ExecRequest {
     code: String,
@@ -24,11 +76,7 @@ pub struct PersistentSession {
 
 impl PersistentSession {
     /// Spawn a new persistent session. Python globals survive across execute() calls.
-    pub fn spawn(
-        store: Arc<DocumentStore>,
-        llm: Arc<LlmClient>,
-        docs: Vec<DocMeta>,
-    ) -> Self {
+    pub fn spawn(store: Arc<DocumentStore>, llm: Arc<LlmClient>, docs: Vec<DocMeta>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<ExecRequest>();
 
         std::thread::spawn(move || {
@@ -50,21 +98,17 @@ impl PersistentSession {
                     warn!("Failed to setup builtins: {}", e);
                     return;
                 }
-                if let Err(e) =
-                    inject_doc_functions(py, &globals, store, llm, rt_handle, &docs)
-                {
+                if let Err(e) = inject_doc_functions(py, &globals, store, llm, rt_handle, &docs) {
                     warn!("Failed to inject doc functions: {}", e);
                     return;
                 }
 
                 debug!("Persistent Python session initialized");
-
                 // Plain OS-level blocking recv — NOT inside a tokio runtime context
                 while let Ok(req) = rx.recv() {
                     let result = execute_in_globals(py, &globals, &req.code);
                     let _ = req.reply.send(result);
                 }
-
                 debug!("Persistent Python session shutting down");
             });
         });
@@ -93,11 +137,7 @@ impl PersistentSession {
 }
 
 /// Execute code within existing globals, capturing stdout.
-fn execute_in_globals(
-    py: Python<'_>,
-    globals: &Bound<'_, PyDict>,
-    code: &str,
-) -> Result<String> {
+fn execute_in_globals(py: Python<'_>, globals: &Bound<'_, PyDict>, code: &str) -> Result<String> {
     let io_module = py.import("io")?;
     let string_io = io_module.getattr("StringIO")?.call0()?;
     let sys = py.import("sys")?;
@@ -114,7 +154,7 @@ fn execute_in_globals(
 
     match result {
         Ok(_) => {
-            debug!(output_len = output.len(), "Python code executed successfully");
+            debug!(output_len = output.len(), "Python executed successfully");
             Ok(output)
         }
         Err(e) => {
@@ -129,24 +169,13 @@ fn setup_restricted_builtins(py: Python<'_>, globals: &Bound<'_, PyDict>) -> PyR
     let builtins = py.import("builtins")?;
     let restricted = PyDict::new(py);
 
-    let allowed = [
-        "print", "len", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
-        "range", "enumerate", "zip", "map", "filter", "sorted", "min", "max", "sum", "abs",
-        "round", "type", "isinstance", "hasattr", "getattr", "repr", "format",
-        "True", "False", "None", "any", "all", "reversed", "chr", "ord",
-    ];
-
-    for name in &allowed {
+    for name in ALLOWED {
         if let Ok(obj) = builtins.getattr(*name) {
             restricted.set_item(*name, obj)?;
         }
     }
 
-    let blocked = [
-        "__import__", "eval", "exec", "compile", "open", "input",
-        "globals", "locals", "breakpoint", "exit", "quit",
-    ];
-    for name in &blocked {
+    for name in BLOCKED {
         restricted.set_item(*name, py.None())?;
     }
 
@@ -403,9 +432,10 @@ fn inject_doc_functions(
             }
 
             let Some(start) = target_offset else {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    format!("File '{}' not found. Use list_files() to see available files.", filename),
-                ));
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "File '{}' not found. Use list_files() to see available files.",
+                    filename
+                )));
             };
 
             // Read until next file header or max 20K chars

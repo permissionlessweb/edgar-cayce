@@ -36,6 +36,14 @@ const BROKEN_ANSWER_PATTERNS: &[&str] = &[
     "not contain content related",
 ];
 
+const STOP_WORDS: &[&str] = &[
+    "what", "which", "where", "when", "does", "have", "with", "that", "this", "from", "about",
+    "some", "there", "their", "they", "your", "been", "were", "how", "could", "would", "should",
+    "shall", "will", "into", "also", "just", "like", "make", "using", "used", "need", "want",
+    "find", "know", "tell", "many", "much", "very", "really", "please", "help", "more", "most",
+    "only",
+];
+
 pub struct RlmResponse {
     pub answer: String,
     pub iterations: u32,
@@ -56,31 +64,28 @@ impl RlmEngine {
 
     /// Extract search terms from a question — handles hyphenated phrases and filters stop words.
     fn extract_keywords(question: &str) -> Vec<String> {
-        let stop_words = [
-            "what", "which", "where", "when", "does", "have", "with", "that", "this",
-            "from", "about", "some", "there", "their", "they", "your", "been", "were",
-            "how", "could", "would", "should", "shall", "will", "into", "also", "just",
-            "like", "make", "using", "used", "need", "want", "find", "know", "tell",
-            "many", "much", "very", "really", "please", "help", "more", "most", "only",
-        ];
-
         let mut keywords = Vec::new();
 
         for word in question.split_whitespace() {
             // Strip punctuation
-            let clean: String = word.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect();
-            if clean.is_empty() { continue; }
+            let clean: String = word
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if clean.is_empty() {
+                continue;
+            }
 
             // Keep hyphenated terms as-is (e.g., "private-ip")
             if clean.contains('-') || clean.contains('_') {
                 keywords.push(clean.to_lowercase());
                 // Also add the parts individually
                 for part in clean.split(|c: char| c == '-' || c == '_') {
-                    if part.len() > 2 && !stop_words.contains(&part.to_lowercase().as_str()) {
+                    if part.len() > 2 && !STOP_WORDS.contains(&part.to_lowercase().as_str()) {
                         keywords.push(part.to_lowercase());
                     }
                 }
-            } else if clean.len() > 2 && !stop_words.contains(&clean.to_lowercase().as_str()) {
+            } else if clean.len() > 2 && !STOP_WORDS.contains(&clean.to_lowercase().as_str()) {
                 keywords.push(clean.to_lowercase());
             }
         }
@@ -166,11 +171,8 @@ elif results:
 
         info!(topic, doc_count = topic_docs.len(), "Starting RLM query");
 
-        let session = PersistentSession::spawn(
-            self.store.clone(),
-            self.llm.clone(),
-            topic_docs.clone(),
-        );
+        let session =
+            PersistentSession::spawn(self.store.clone(), self.llm.clone(), topic_docs.clone());
 
         let doc_summary: Vec<String> = topic_docs
             .iter()
@@ -191,7 +193,10 @@ elif results:
         // Bootstrap: auto-execute an initial read so the LLM sees proof the REPL works
         let bootstrap_code = Self::build_bootstrap_code(&topic_docs, question);
         let bootstrap_output = session.execute(&bootstrap_code).await?;
-        debug!(output_len = bootstrap_output.len(), "─── Bootstrap Output ───");
+        debug!(
+            output_len = bootstrap_output.len(),
+            "─── Bootstrap Output ───"
+        );
         for line in bootstrap_output.lines().take(20) {
             debug!("  │ {}", line);
         }
@@ -233,7 +238,7 @@ elif results:
 
         let sources: Vec<String> = topic_docs.iter().map(|d| d.source.clone()).collect();
         let mut code_executions = 1u32; // bootstrap counts as one
-        // Accumulate substantive REPL outputs as evidence
+                                        // Accumulate substantive REPL outputs as evidence
         let mut evidence: Vec<String> = Vec::new();
         if bootstrap_output.len() > 50 && !bootstrap_output.starts_with("Error:") {
             evidence.push(bootstrap_output);
@@ -244,7 +249,11 @@ elif results:
 
             let response = self.llm.chat(&messages, None).await?;
 
-            debug!(iteration, response_len = response.len(), "─── LLM Response ───");
+            debug!(
+                iteration,
+                response_len = response.len(),
+                "─── LLM Response ───"
+            );
             for line in response.lines().take(50) {
                 debug!("  │ {}", line);
             }
@@ -259,7 +268,10 @@ elif results:
                 Command::Final(answer) => {
                     // Gate 1: enough code executions?
                     if code_executions < min_code_executions {
-                        debug!(iteration, code_executions, "FINAL rejected — not enough code runs");
+                        debug!(
+                            iteration,
+                            code_executions, "FINAL rejected — not enough code runs"
+                        );
                         messages.push(Message {
                             role: "assistant".to_string(),
                             content: response,
@@ -278,7 +290,11 @@ elif results:
 
                     // Gate 2: answer long enough to be substantive?
                     if answer.len() < min_answer_len {
-                        debug!(iteration, answer_len = answer.len(), "FINAL rejected — too short");
+                        debug!(
+                            iteration,
+                            answer_len = answer.len(),
+                            "FINAL rejected — too short"
+                        );
                         messages.push(Message {
                             role: "assistant".to_string(),
                             content: response,
@@ -293,7 +309,12 @@ elif results:
                         continue;
                     }
 
-                    info!(iteration, code_executions, answer_len = answer.len(), "RLM complete");
+                    info!(
+                        iteration,
+                        code_executions,
+                        answer_len = answer.len(),
+                        "RLM complete"
+                    );
                     debug!("Final answer: {}", &answer[..answer.len().min(500)]);
                     return Ok(RlmResponse {
                         answer,
@@ -316,7 +337,12 @@ elif results:
                     let output = session.execute(&code).await?;
                     code_executions += 1;
 
-                    debug!(iteration, code_executions, output_len = output.len(), "─── Code Output ───");
+                    debug!(
+                        iteration,
+                        code_executions,
+                        output_len = output.len(),
+                        "─── Code Output ───"
+                    );
                     for line in output.lines().take(30) {
                         debug!("  │ {}", line);
                     }
@@ -366,16 +392,18 @@ elif results:
         }
 
         // Max iterations — synthesize from evidence
-        warn!(code_executions, evidence_count = evidence.len(), "RLM hit max iterations");
+        warn!(
+            code_executions,
+            evidence_count = evidence.len(),
+            "RLM hit max iterations"
+        );
 
         let answer = self
             .synthesize_from_evidence(&mut messages, &evidence, question)
             .await?;
 
         // Validate before returning
-        let answer = self
-            .validate_answer(answer, &evidence, question)
-            .await?;
+        let answer = self.validate_answer(answer, &evidence, question).await?;
 
         Ok(RlmResponse {
             answer,
@@ -397,7 +425,11 @@ elif results:
                 .iter()
                 .enumerate()
                 .map(|(i, e)| {
-                    let truncated = if e.len() > 2000 { &e[..2000] } else { e.as_str() };
+                    let truncated = if e.len() > 2000 {
+                        &e[..2000]
+                    } else {
+                        e.as_str()
+                    };
                     format!("--- Evidence {} ---\n{}", i + 1, truncated)
                 })
                 .collect::<Vec<_>>()
@@ -450,7 +482,10 @@ elif results:
             return Ok(answer);
         }
 
-        warn!(answer_len = answer.len(), "Answer validation failed — attempting rescue");
+        warn!(
+            answer_len = answer.len(),
+            "Answer validation failed — attempting rescue"
+        );
 
         // If we have evidence, build an answer directly from it
         if !evidence.is_empty() {
@@ -459,7 +494,11 @@ elif results:
                 .take(5)
                 .enumerate()
                 .map(|(i, e)| {
-                    let truncated = if e.len() > 3000 { &e[..3000] } else { e.as_str() };
+                    let truncated = if e.len() > 3000 {
+                        &e[..3000]
+                    } else {
+                        e.as_str()
+                    };
                     format!("--- Source {} ---\n{}", i + 1, truncated)
                 })
                 .collect::<Vec<_>>()
