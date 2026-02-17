@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{debug, info, warn};
 
-use crate::docs::types::DocMeta;
+use crate::docs::types::{DocMeta, QaRecord};
 use crate::docs::DocumentStore;
 use crate::llm::{LlmClient, Message};
 
@@ -50,6 +50,25 @@ pub struct RlmResponse {
     pub sources: Vec<String>,
     /// Raw evidence collected from REPL outputs (document content the LLM actually read)
     pub evidence: Vec<String>,
+    /// Public URLs extracted from markdown links in the answer
+    pub cited_urls: Vec<String>,
+}
+
+/// Extract URLs from markdown links `[text](url)` in the answer text.
+fn extract_cited_urls(text: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("](") {
+        let after = &rest[start + 2..];
+        if let Some(end) = after.find(')') {
+            let url = after[..end].trim();
+            if url.starts_with("http") && !urls.contains(&url.to_string()) {
+                urls.push(url.to_string());
+            }
+        }
+        rest = &rest[start + 2..];
+    }
+    urls
 }
 
 pub struct RlmEngine {
@@ -60,6 +79,33 @@ pub struct RlmEngine {
 impl RlmEngine {
     pub fn new(llm: Arc<LlmClient>, store: Arc<DocumentStore>) -> Self {
         Self { llm, store }
+    }
+
+    /// Fire-and-forget Q/A storage. Logs errors but never fails the response.
+    async fn store_qa_record(
+        &self,
+        topic: &str,
+        question: &str,
+        response: &RlmResponse,
+        doc_ids: Vec<String>,
+    ) {
+        let id = blake3::hash(format!("{}{}", topic, question).as_bytes())
+            .to_hex()
+            .to_string();
+        let record = QaRecord {
+            id,
+            topic: topic.to_string(),
+            question: question.to_string(),
+            answer: response.answer.clone(),
+            cited_urls: response.cited_urls.clone(),
+            doc_ids,
+            evidence: response.evidence.clone(),
+            iterations: response.iterations,
+            timestamp: chrono::Utc::now().timestamp(),
+        };
+        if let Err(e) = self.store.store_qa(&record).await {
+            warn!(error = %e, "Failed to store Q/A record");
+        }
     }
 
     /// Extract search terms from a question — handles hyphenated phrases and filters stop words.
@@ -166,6 +212,7 @@ elif results:
                 iterations: 0,
                 sources: vec![],
                 evidence: vec![],
+                cited_urls: vec![],
             });
         }
 
@@ -177,10 +224,14 @@ elif results:
         let doc_summary: Vec<String> = topic_docs
             .iter()
             .map(|d| {
-                format!(
+                let mut line = format!(
                     "  - doc_id=\"{}\" name=\"{}\" source=\"{}\" size={}",
                     d.id, d.name, d.source, d.size
-                )
+                );
+                if let Some(ctx) = &d.url_context {
+                    line.push_str(&format!("\n    URL_CONTEXT: {}", ctx));
+                }
+                line
             })
             .collect();
         let system_with_docs = format!(
@@ -316,12 +367,17 @@ elif results:
                         "RLM complete"
                     );
                     debug!("Final answer: {}", &answer[..answer.len().min(500)]);
-                    return Ok(RlmResponse {
+                    let cited_urls = extract_cited_urls(&answer);
+                    let doc_ids: Vec<String> = topic_docs.iter().map(|d| d.id.clone()).collect();
+                    let result = RlmResponse {
                         answer,
                         iterations: iteration,
                         sources,
                         evidence,
-                    });
+                        cited_urls,
+                    };
+                    self.store_qa_record(topic, question, &result, doc_ids).await;
+                    return Ok(result);
                 }
                 Command::RunCode(code) => {
                     debug!(iteration, "─── Executing Code ───");
@@ -404,13 +460,18 @@ elif results:
 
         // Validate before returning
         let answer = self.validate_answer(answer, &evidence, question).await?;
+        let cited_urls = extract_cited_urls(&answer);
+        let doc_ids: Vec<String> = topic_docs.iter().map(|d| d.id.clone()).collect();
 
-        Ok(RlmResponse {
+        let result = RlmResponse {
             answer,
             iterations: max_iterations,
             sources,
             evidence,
-        })
+            cited_urls,
+        };
+        self.store_qa_record(topic, question, &result, doc_ids).await;
+        Ok(result)
     }
 
     /// Synthesize an answer from collected evidence when the loop exhausts iterations.

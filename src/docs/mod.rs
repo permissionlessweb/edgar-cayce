@@ -8,12 +8,13 @@ use cnidarium::{StateDelta, StateWrite, Storage};
 use futures::StreamExt;
 use tracing::{debug, warn};
 
-use types::{DocExcerpt, DocId, DocMeta};
+use types::{DocExcerpt, DocId, DocMeta, QaRecord};
 
 // Key prefixes (no trailing slashes — cnidarium convention)
 const CONTENT_PREFIX: &str = "doc/content";
 const META_PREFIX: &str = "doc/meta";
 const LABEL_PREFIX: &str = "doc/label";
+const QA_PREFIX: &str = "qa";
 
 fn content_key(id: &str) -> String {
     format!("{}/{}", CONTENT_PREFIX, id)
@@ -23,6 +24,9 @@ fn meta_key(id: &str) -> String {
 }
 fn label_key(label: &str, id: &str) -> String {
     format!("{}/{}:{}", LABEL_PREFIX, label, id)
+}
+fn qa_key(topic: &str, id: &str) -> String {
+    format!("{}/{}/{}", QA_PREFIX, topic, id)
 }
 
 pub struct DocumentStore {
@@ -38,6 +42,7 @@ impl DocumentStore {
             CONTENT_PREFIX.to_string(),
             META_PREFIX.to_string(),
             LABEL_PREFIX.to_string(),
+            QA_PREFIX.to_string(),
         ];
         let storage = Storage::load(data_dir.to_path_buf(), prefixes)
             .await
@@ -56,6 +61,7 @@ impl DocumentStore {
         name: &str,
         source: &str,
         label: &str,
+        url_context: Option<&str>,
     ) -> Result<DocId> {
         let id = blake3::hash(content).to_hex().to_string();
 
@@ -66,6 +72,7 @@ impl DocumentStore {
             label: label.to_string(),
             size: content.len(),
             ingested_at: chrono::Utc::now().timestamp(),
+            url_context: url_context.map(|s| s.to_string()),
         };
 
         let snapshot = self.storage.latest_snapshot();
@@ -314,5 +321,44 @@ impl DocumentStore {
         }
 
         Ok(labels.into_iter().collect())
+    }
+
+    /// Store a Q/A record for dataset curation.
+    pub async fn store_qa(&self, record: &QaRecord) -> Result<()> {
+        let snapshot = self.storage.latest_snapshot();
+        let mut delta = StateDelta::new(snapshot);
+        delta.put_raw(
+            qa_key(&record.topic, &record.id),
+            serde_json::to_vec(record).context("serialize QaRecord")?,
+        );
+        self.storage.commit(delta).await?;
+        debug!(qa_id = %record.id, topic = %record.topic, "Q/A record stored");
+        Ok(())
+    }
+
+    /// List Q/A records for a topic, newest first.
+    pub async fn list_qa(&self, topic: &str, limit: usize) -> Result<Vec<QaRecord>> {
+        let snapshot = self.storage.latest_snapshot();
+        use cnidarium::StateRead;
+        let prefix = format!("{}/{}/", QA_PREFIX, topic);
+        let mut stream = snapshot.prefix_raw(&prefix);
+        let mut results = Vec::new();
+
+        while let Some(entry) = stream.next().await {
+            match entry {
+                Ok((_key, value)) => {
+                    if let Ok(record) = serde_json::from_slice::<QaRecord>(&value) {
+                        results.push(record);
+                    }
+                }
+                Err(e) => {
+                    warn!("Error reading QA stream: {}", e);
+                }
+            }
+        }
+
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        results.truncate(limit);
+        Ok(results)
     }
 }

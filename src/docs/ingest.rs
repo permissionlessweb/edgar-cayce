@@ -4,6 +4,20 @@ use tracing::info;
 use super::types::DocId;
 use super::DocumentStore;
 
+/// Derive a default URL context from a GitHub repo URL + branch.
+/// Returns a natural-language instruction the LLM can use to construct links.
+fn derive_github_url_context(url: &str, branch: &str) -> Option<String> {
+    let trimmed = url.trim_end_matches('/').trim_end_matches(".git");
+    if trimmed.contains("github.com") {
+        Some(format!(
+            "Source files from this repository are publicly viewable at {}/blob/{}/{{filepath}}",
+            trimmed, branch
+        ))
+    } else {
+        None
+    }
+}
+
 /// Ingest a GitHub repository using githem-core.
 /// Returns (doc_id, file_count).
 pub async fn ingest_github_repo(
@@ -11,6 +25,8 @@ pub async fn ingest_github_repo(
     url: &str,
     label: &str,
     doc_type: Option<&str>,
+    branch: Option<&str>,
+    url_context: Option<&str>,
 ) -> Result<(DocId, usize)> {
     // Validate GitHub URL
     let _parsed =
@@ -52,13 +68,29 @@ pub async fn ingest_github_repo(
         .join("/");
 
     let source = format!("github:{}", name);
-    let doc_id = store.store(&output, &name, &source, label).await?;
+
+    // Derive url_context: explicit override > auto-derived from GitHub URL
+    let effective_branch = branch.unwrap_or("main");
+    let effective_url_context = url_context
+        .map(|s| s.to_string())
+        .or_else(|| derive_github_url_context(url, effective_branch));
+
+    let doc_id = store
+        .store(
+            &output,
+            &name,
+            &source,
+            label,
+            effective_url_context.as_deref(),
+        )
+        .await?;
 
     info!(
         doc_id = %doc_id,
         file_count,
         size = output.len(),
         label,
+        url_context = ?effective_url_context,
         "GitHub repo ingested"
     );
 
@@ -98,7 +130,7 @@ pub async fn ingest_url(
         .next()
         .unwrap_or(url);
     let source = format!("url:{}", url);
-    let doc_id = store.store(text.as_bytes(), name, &source, label).await?;
+    let doc_id = store.store(text.as_bytes(), name, &source, label, None).await?;
 
     info!(doc_id = %doc_id, size = text.len(), label, "URL ingested");
     Ok((doc_id, text.len()))
