@@ -10,6 +10,9 @@ pub async fn ingest(
     #[description = "Topic label for this document"] label: String,
     #[description = "Type: documentation, code, minimal"]
     doc_type: Option<String>,
+    #[description = "Git branch (default: main)"] branch: Option<String>,
+    #[description = "URL attribution context, e.g. 'files in docs/ map to https://example.com/docs'"]
+    url_context: Option<String>,
 ) -> Result<(), anyhow::Error> {
     ctx.defer().await?;
 
@@ -29,6 +32,8 @@ pub async fn ingest(
             &url,
             &label,
             doc_type.as_deref(),
+            branch.as_deref(),
+            url_context.as_deref(),
         )
         .await?;
         (id, format!("{} files", file_count))
@@ -39,9 +44,15 @@ pub async fn ingest(
 
     let meta = store.get_meta(&doc_id).await?;
 
+    let url_note = meta
+        .url_context
+        .as_deref()
+        .map(|u| format!("\nURL context: {}", u))
+        .unwrap_or_default();
+
     ctx.say(format!(
-        "Ingested **{}** ({}) under topic **'{}'**\nDoc ID: `{}`\nSize: {} bytes",
-        meta.name, detail, label, doc_id, meta.size
+        "Ingested **{}** ({}) under topic **'{}'**\nDoc ID: `{}`\nSize: {} bytes{}",
+        meta.name, detail, label, doc_id, meta.size, url_note
     ))
     .await?;
 

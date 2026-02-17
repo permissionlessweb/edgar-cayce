@@ -52,13 +52,25 @@ pub async fn ask(
     );
 
     let mut full = format!(
-        "**Q:** {}\n**Topic:** {} | **Iterations:** {} | **Sources:** {}\n\n**A:** {}",
+        "**Q:** {}\n**Topic:** {} | **Iterations:** {}\n\n**A:** {}",
         question,
         topic,
         result.iterations,
-        result.sources.join(", "),
         result.answer
     );
+
+    // Append cited URLs as clickable Discord markdown links
+    if !result.cited_urls.is_empty() {
+        full.push_str("\n\n**Sources:**\n");
+        for url in &result.cited_urls {
+            // Extract a short label from the URL path
+            let label = url
+                .rsplit('/')
+                .find(|s| !s.is_empty())
+                .unwrap_or(url);
+            full.push_str(&format!("- [{}]({})\n", label, url));
+        }
+    }
 
     // Admin-only debug evidence
     if show_debug && !result.evidence.is_empty() {
