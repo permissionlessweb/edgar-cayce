@@ -83,16 +83,39 @@ All commands are under the `/edgar` parent:
 
 Ingest a document into the knowledge store.
 
-```
-/edgar ingest url:https://github.com/akash-network/website label:akash-docs doc_type:documentation
-/edgar ingest url:https://docs.example.com/api label:api-docs
-```
+`/edgar ingest url:https://github.com/akash-network/website label:akash doc_type:documentation`\
+___
+`/edgar ingest` `url:https://github.com/akash-network/website` `label:akash` `url_context:Content paths map to https://akash.network/{path} — strip src/content/ prefix and file extensions. src/content/Docs/getting-started/index.mdx → https://akash.network/docs/getting-started, src/content/Blog/some-post/index.md → https://akash.network/blog/some-post. Index files map to parent directory.`
+___
+`/edgar ingest url:https://docs.example.com/api label:api-docs`
+___
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `url` | yes | GitHub repo URL or any web page |
 | `label` | yes | Topic label (used to scope `/edgar ask` queries) |
 | `doc_type` | no | `documentation` (default), `code`, or `minimal` — controls file filtering for GitHub repos |
+| `branch` | no | Git branch to use (default: `main`) |
+| `url_context` | no | URL attribution context — tells the RLM how to map file paths to public URLs (see below) |
+
+#### URL Context
+
+When ingesting a GitHub repo, Edgar auto-generates a default `url_context` pointing to the GitHub blob view. This works for source code, but if the repo powers a public docs site, the file paths don't match the public URLs.
+
+Set `url_context` to tell the RLM how to construct real public links:
+
+```
+# Akash docs site — file paths map to akash.network
+url_context: Content paths map to https://akash.network/{path} — strip src/content/ prefix and file extensions. src/content/Docs/deployments/akash-cli/overview.mdx → https://akash.network/docs/deployments/akash-cli/overview, src/content/Blog/gpu-pricing/index.md → https://akash.network/blog/gpu-pricing. Index files map to parent directory.
+
+# Simple API docs
+url_context: All files in docs/ are published at https://docs.example.com/{filename without extension}
+
+# Wiki-style
+url_context: Markdown files map to https://wiki.example.org/pages/{filename} — replace .md extension with nothing, use lowercase
+```
+
+The RLM injects this context into the system prompt so the LLM can intelligently construct clickable markdown links in its answers. Answers in Discord will render these as clickable `[label](url)` links.
 
 ### `/edgar ask`
 
@@ -107,7 +130,7 @@ Ask a question about ingested documents. The bot runs a multi-step reasoning loo
 | `topic` | yes | Label matching ingested documents (autocompletes) |
 | `question` | yes | Your question |
 
-The response includes iteration count and source list.
+The response includes iteration count and cited source URLs. When `url_context` is set on the ingested documents, the answer will contain clickable links to the public documentation.
 
 ### `/edgar sources`
 
@@ -210,7 +233,7 @@ src/
 │   └── manage.rs     # /edgar clear, /edgar thread
 ├── docs/
 │   ├── mod.rs        # DocumentStore (cnidarium-backed)
-│   ├── types.rs      # DocId, DocMeta, DocExcerpt
+│   ├── types.rs      # DocId, DocMeta, DocExcerpt, QaRecord
 │   └── ingest.rs     # GitHub ingestion via githem-core
 └── rlm/
     ├── mod.rs        # RlmEngine reasoning loop
@@ -223,12 +246,14 @@ src/
 
 1. User asks a question scoped to a topic
 2. Engine loads documents matching that topic label
-3. System prompt instructs the LLM to use Python code for document analysis
+3. System prompt instructs the LLM to use Python code for document analysis — `url_context` is injected here so the LLM knows how to construct public URLs
 4. LLM outputs `\`\`\`repl ... \`\`\`` blocks which are executed in a PyO3 sandbox
 5. Sandbox provides: `list_documents()`, `get_section()`, `search_document()`, `llm_query()`
 6. Sandbox blocks: `import`, `open`, `eval`, `exec`, shell access
 7. Loop continues (up to 15 iterations) until LLM returns `FINAL(answer)`
-8. Answer is posted to Discord
+8. Cited URLs are extracted from the answer's markdown links
+9. Answer is posted to Discord with clickable source links
+10. Q/A record is stored in cnidarium for dataset curation
 
 ## Troubleshooting
 

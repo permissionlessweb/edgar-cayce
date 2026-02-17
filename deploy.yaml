@@ -1,0 +1,59 @@
+---
+# Edgar Discord Bot — Akash SDL
+# ═══════════════════════════════════════════════════════════════════════════════
+# Build & push before deploying:
+#   docker build -t <your-registry>/edgar:0.1.0 .
+#   docker push <your-registry>/edgar:0.1.0
+# Then update the image field below.
+# ═══════════════════════════════════════════════════════════════════════════════
+version: "2.0"
+
+services:
+  edgar:
+    image: permissionlessweb/edgar-cayce:0.0.1
+    env:
+      # ── Discord ──────────────────────────────────────────────────────────────
+      - "DISCORD_TOKEN="                  # REQUIRED — bot token from dev portal
+      - "DISCORD_GUILD_ID="               # guild ID for instant slash-command registration
+      - "ADMIN_USER_IDS="                 # comma-separated Discord user IDs
+      # ── LLM endpoint (OpenAI-compatible) ─────────────────────────────────────
+      - "LLM_BASE_URL=https://api.openai.com/v1"
+      - "LLM_MODEL=Qwen/Qwen2.5-Coder-7B-Instruct"
+      - "LLM_SUB_MODEL=Qwen/Qwen2.5-Coder-7B-Instruct"
+      - "LLM_API_KEY="
+      # ── Runtime ──────────────────────────────────────────────────────────────
+      - "RUST_LOG=info"
+    expose:
+      # Discord Gateway — outbound WSS :443 is unrestricted on Akash.
+      # This port is exposed for health checks / future metrics endpoint.
+      - port: 8080
+        as: 80
+        to:
+          - global: true
+
+profiles:
+  compute:
+    edgar:
+      resources:
+        cpu:
+          units: 2
+        memory:
+          size: 2Gi
+        storage:
+          - size: 1Gi            # ephemeral (OS + binary)
+          - size: 100Gi          # persistent — cnidarium document store
+            attributes:
+              persistent: true
+              class: beta2
+  placement:
+    akash:
+      pricing:
+        edgar:
+          denom: uakt
+          amount: 1000
+
+deployment:
+  edgar:
+    akash:
+      profile: edgar
+      count: 1

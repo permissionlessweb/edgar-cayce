@@ -7,28 +7,26 @@
   - how documents are labeled
   - structured output formats
 
-### citing sources + document url routing
+- web seach tool: enable web search on per-document basis. only allow specific websites registred to be included in web tool query
 
-we must be able to attribute document sources with public urls. right now we are only aware of file/context location rleative to github repo. we can provide a public-url prompt admins are able to set when ingesting documents that say:
+## RLM TOOLING IMPROVEMENTS
 
-```
-"all infomration found in docs/ folder can be routed/attributed to the url <https://akash.network/docs>"
-```
+- integrate vector embeddings
+- sub-rlm route for finding previous questions and workflows
 
-alternatively,we cna add support for a headless browser/ web search tool for fetching data from public documetnation url (set by admins) for crosslinking and refernceing source location,.
+## STORAGE/DB IMPROVEMENTS
 
-- improve rlm tooling available
-  - integrate vector embeddings
-  - sub-rlm route for finding previous questions and workflows
 - record q/a + feeback on quality of response
 - benchmarks, test suite
+- compression workflows
+- exporting workflow: export database logs to s3 bucket,portable for out of band classification
 
 ## DISCORD UX/UI Improvements
 
 ### PRIORITY
 
 - alwasy display question + prompt public (right now its obfuscated from tool call)
--
+- respond with question revieved, display question, and then display pending until loop is complete, update msg with completed answer
 
 ### IDEAS
 
