@@ -33,3 +33,15 @@
 - discord bot reacts to questions coming into chat, rather than prompted "is this a question related to one of the documentations i have?", "has this user paid a premium to have their questions answered"
 - create & manage dedicated threads: create threads for specific questions, answer in threads, but questiosn can be asked in any channels (ping user with response linking to specific thread with answer). use existing thread answers for additional context
 - upvoting downvoting: allow users(specific roles) to provide feedback on the answers being provided
+
+## TRANSPARENCY
+
+- provide users with a view of the system prompt being used
+- proivde user with the url_context prompt being used
+
+## BENCHMARKING
+
+- token-count per iteration, tokens-per-second (input & output)
+- system prompt token count
+- benchmarking suite (common questions, reusable prompts)
+- flamegraph usage per prompt
