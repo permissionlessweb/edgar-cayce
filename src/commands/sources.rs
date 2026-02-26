@@ -38,15 +38,24 @@ pub async fn sources(
         output.push('\n');
     }
 
-    // Chunk if needed
+    // Chunk if needed — use ctx.say() for all chunks so follow-ups go
+    // through the interaction webhook (no Send Messages permission required).
     if output.len() <= 2000 {
         ctx.say(output).await?;
     } else {
-        ctx.say(&output[..1990]).await?;
-        if output.len() > 1990 {
-            ctx.channel_id()
-                .say(ctx.http(), &output[1990..output.len().min(3990)])
-                .await?;
+        let mut remaining = output.as_str();
+        while !remaining.is_empty() {
+            let end = remaining.len().min(1990);
+            let split_at = if end < remaining.len() {
+                remaining[..end]
+                    .rfind('\n')
+                    .map(|i| i + 1)
+                    .unwrap_or(end)
+            } else {
+                end
+            };
+            ctx.say(&remaining[..split_at]).await?;
+            remaining = &remaining[split_at..];
         }
     }
 

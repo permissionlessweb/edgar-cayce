@@ -282,3 +282,5 @@ src/
 ### PRIVACY
 
 Privacy in the context of discord bots is hard. We would 3ave to route Q/A to a web-app client side, and then have some sort of ZK-TLS proof of membership for access to bot. Questions and answers would be public, but users who asked would be private.
+
+Review the [privacy policy](./PRIVACY_POLICY.md) before use.

@@ -185,7 +185,6 @@ impl DocumentStore {
     pub async fn delete(&self, doc_id: &str) -> Result<()> {
         // Get meta first for label cleanup
         let meta = self.get_meta(doc_id).await?;
-
         let snapshot = self.storage.latest_snapshot();
         let mut delta = StateDelta::new(snapshot);
         delta.delete(content_key(doc_id));

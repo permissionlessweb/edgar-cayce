@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     pkg-config \
     libssl-dev \
+    clang \
+    libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
