@@ -1,3 +1,4 @@
+use crate::commands::config::is_admin;
 use crate::state::Context;
 use tracing::info;
 
@@ -11,10 +12,15 @@ pub async fn ask(
     #[description = "Your question"] question: String,
     #[description = "Show debug evidence (admin only)"] debug: Option<bool>,
 ) -> Result<(), anyhow::Error> {
-    ctx.defer().await?;
+    // Acknowledge immediately so the user isn't staring at a loading spinner
+    let user_mention = format!("<@{}>", ctx.author().id);
+    ctx.say(format!(
+        "Got it — researching **{}** for you. I'll ping you when the answer is ready, {}",
+        topic, user_mention
+    ))
+    .await?;
 
-    let user_id = ctx.author().id.get();
-    let is_admin = ctx.data().is_admin(user_id);
+    let is_admin = is_admin(&ctx).await;
     let show_debug = debug.unwrap_or(false) && is_admin;
 
     // Read current config
@@ -22,14 +28,12 @@ pub async fn ask(
     let max_iterations = config.max_iterations;
     let min_code_executions = config.min_code_executions;
     let min_answer_len = config.min_answer_len;
+    let parallel_loops = config.parallel_loops;
     drop(config);
 
     info!(
         user = ctx.author().name,
-        topic,
-        question,
-        is_admin,
-        "RLM query started"
+        topic, question, is_admin, "RLM query started"
     );
 
     let result = ctx
@@ -41,6 +45,7 @@ pub async fn ask(
             max_iterations,
             min_code_executions,
             min_answer_len,
+            parallel_loops,
         )
         .await?;
 
@@ -52,11 +57,8 @@ pub async fn ask(
     );
 
     let mut full = format!(
-        "**Q:** {}\n**Topic:** {} | **Iterations:** {}\n\n**A:** {}",
-        question,
-        topic,
-        result.iterations,
-        result.answer
+        "{} here's what I found:\n\n**Q:** {}\n**Topic:** {} | **Iterations:** {}\n\n**A:** {}",
+        user_mention, question, topic, result.iterations, result.answer
     );
 
     // Append cited URLs as clickable Discord markdown links
@@ -64,10 +66,7 @@ pub async fn ask(
         full.push_str("\n\n**Sources:**\n");
         for url in &result.cited_urls {
             // Extract a short label from the URL path
-            let label = url
-                .rsplit('/')
-                .find(|s| !s.is_empty())
-                .unwrap_or(url);
+            let label = url.rsplit('/').find(|s| !s.is_empty()).unwrap_or(url);
             full.push_str(&format!("- [{}]({})\n", label, url));
         }
     }
@@ -76,7 +75,11 @@ pub async fn ask(
     if show_debug && !result.evidence.is_empty() {
         full.push_str("\n\n---\n**[Debug] Evidence collected from documents:**\n");
         for (i, ev) in result.evidence.iter().enumerate().take(3) {
-            let snippet = if ev.len() > 800 { &ev[..800] } else { ev.as_str() };
+            let snippet = if ev.len() > 800 {
+                &ev[..800]
+            } else {
+                ev.as_str()
+            };
             full.push_str(&format!("\n**[{}]** ```\n{}```\n", i + 1, snippet));
         }
     }
@@ -86,9 +89,10 @@ pub async fn ask(
 }
 
 /// Send a message in Discord-safe chunks (max 1990 chars).
+/// Uses ctx.say() for all chunks — poise routes follow-ups through the
+/// interaction webhook, which doesn't require Send Messages channel permission.
 async fn send_chunked(ctx: &Context<'_>, text: &str) -> Result<(), anyhow::Error> {
     let mut remaining = text;
-    let mut first = true;
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(1990);
         let split_at = if chunk_len < remaining.len() {
@@ -103,24 +107,14 @@ async fn send_chunked(ctx: &Context<'_>, text: &str) -> Result<(), anyhow::Error
         let chunk = &remaining[..split_at];
         remaining = &remaining[split_at..];
 
-        if first {
-            ctx.say(chunk).await?;
-            first = false;
-        } else {
-            ctx.channel_id().say(ctx.http(), chunk).await?;
-        }
+        ctx.say(chunk).await?;
     }
     Ok(())
 }
 
 /// Autocomplete for topic names from ingested document labels.
 async fn autocomplete_topic(ctx: Context<'_>, partial: &str) -> Vec<String> {
-    let labels = ctx
-        .data()
-        .store
-        .labels()
-        .await
-        .unwrap_or_default();
+    let labels = ctx.data().store.labels().await.unwrap_or_default();
 
     labels
         .into_iter()

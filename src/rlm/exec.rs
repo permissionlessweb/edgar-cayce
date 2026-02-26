@@ -10,6 +10,9 @@ use crate::docs::types::DocMeta;
 use crate::docs::DocumentStore;
 use crate::llm::LlmClient;
 
+/// Thread-safe tracker for files accessed via `read_file()` during a session.
+pub type FileTracker = Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
 pub const BLOCKED: &[&str] = &[
     "__import__",
     "eval",
@@ -72,12 +75,15 @@ struct ExecRequest {
 /// Runs on a dedicated OS thread. Uses std::sync channels to avoid nested block_on.
 pub struct PersistentSession {
     tx: std::sync::mpsc::Sender<ExecRequest>,
+    accessed_files: FileTracker,
 }
 
 impl PersistentSession {
     /// Spawn a new persistent session. Python globals survive across execute() calls.
     pub fn spawn(store: Arc<DocumentStore>, llm: Arc<LlmClient>, docs: Vec<DocMeta>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<ExecRequest>();
+        let accessed_files: FileTracker = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let tracker = accessed_files.clone();
 
         std::thread::spawn(move || {
             // Build a runtime for async bridging inside PyO3 closures.
@@ -98,7 +104,7 @@ impl PersistentSession {
                     warn!("Failed to setup builtins: {}", e);
                     return;
                 }
-                if let Err(e) = inject_doc_functions(py, &globals, store, llm, rt_handle, &docs) {
+                if let Err(e) = inject_doc_functions(py, &globals, store, llm, rt_handle, &docs, tracker) {
                     warn!("Failed to inject doc functions: {}", e);
                     return;
                 }
@@ -113,7 +119,15 @@ impl PersistentSession {
             });
         });
 
-        Self { tx }
+        Self { tx, accessed_files }
+    }
+
+    /// Get all files accessed via `read_file()` during this session.
+    pub fn accessed_files(&self) -> Vec<(String, String)> {
+        match self.accessed_files.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 
     /// Execute code in the persistent session. Variables from previous calls are available.
@@ -191,6 +205,7 @@ fn inject_doc_functions(
     llm: Arc<LlmClient>,
     rt: Handle,
     docs: &[DocMeta],
+    file_tracker: FileTracker,
 ) -> PyResult<()> {
     // Inject `documents` variable
     let doc_list = PyList::empty(py);
@@ -401,6 +416,7 @@ fn inject_doc_functions(
     // read_file(doc_id, filename) — read a specific file/section by name
     let store_rf = store.clone();
     let rt_rf = rt.clone();
+    let tracker_rf = file_tracker;
     let read_file = PyCFunction::new_closure(
         py,
         Some(c"read_file"),
@@ -420,10 +436,12 @@ fn inject_doc_functions(
             let filename_lower = filename.to_lowercase();
             let mut target_offset = None;
             let mut next_offset = None;
+            let mut matched_name = None;
 
             for (i, (offset, name)) in files.iter().enumerate() {
                 if name.to_lowercase().contains(&filename_lower) {
                     target_offset = Some(*offset);
+                    matched_name = Some(name.clone());
                     if i + 1 < files.len() {
                         next_offset = Some(files[i + 1].0);
                     }
@@ -437,6 +455,13 @@ fn inject_doc_functions(
                     filename
                 )));
             };
+
+            // Record successful file access for citation tracking
+            if let Some(name) = matched_name {
+                if let Ok(mut tracker) = tracker_rf.lock() {
+                    tracker.push((doc_id.clone(), name));
+                }
+            }
 
             // Read until next file header or max 20K chars
             let max_len = 20_000;

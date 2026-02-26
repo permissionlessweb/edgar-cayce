@@ -50,6 +50,17 @@ async fn main() -> anyhow::Result<()> {
         info!(count = admin_ids.len(), "Admin users configured");
     }
 
+    // Parse admin role IDs from env
+    let admin_role_ids: HashSet<u64> = dotenv::var("ADMIN_ROLE_IDS")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|s| s.trim().parse::<u64>().ok())
+        .collect();
+    if !admin_role_ids.is_empty() {
+        info!(count = admin_role_ids.len(), "Admin roles configured");
+    }
+    let admin_role_ids = Arc::new(RwLock::new(admin_role_ids));
+
     let rlm_config = Arc::new(RwLock::new(RlmConfig::default()));
 
     // Init RLM engine
@@ -60,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         llm: llm_client,
         rlm,
         admin_ids,
+        admin_role_ids,
         rlm_config,
     };
 

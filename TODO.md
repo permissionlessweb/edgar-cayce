@@ -15,6 +15,7 @@
 - integrate vector embeddings
 - sub-rlm route for finding previous questions and workflows:
   - check for exiting questions -> grade similarity + include in context loop -> continue ()
+  - qmd + rag embedding
 
 ## STORAGE/DB IMPROVEMENTS
 
@@ -32,7 +33,7 @@
 
 ### IDEAS
 
-- discord bot reacts to questions coming into chat, rather than prompted "is this a question related to one of the documentations i have?", "has this user paid a premium to have their questions answered"
+- discord bot reacts to questions coming into chat, rather than prompted. uses small model iterative rlm loop "is this a question related to one of the documentations i have?", "has this user paid a premium to have their questions answered?", "have I answered this question already?"
 - upvoting downvoting: allow users(specific roles) to provide feedback on the answers being provided
   - tell bot: "this question has been answered correctly with this answer
 
